@@ -1,8 +1,8 @@
 import streamlit as st
-import base64
 import math
-import streamlit.components.v1 as components
 from graph_maker import GraphEngine, GraphConfig
+from math_analyser import MathAnalyser
+from interactive_viewer import render_interactive_graph
 
 # 1. Layout "wide" allows us to use columns effectively
 st.set_page_config(layout="wide", page_title="GraphMaker")
@@ -10,20 +10,15 @@ st.set_page_config(layout="wide", page_title="GraphMaker")
 # --- CSS HACKS FOR COMPACT UI ---
 st.markdown("""
     <style>
-        /* Fix top clipping by giving more room */
         .block-container {
-            padding-top: 4rem; 
+            padding-top: 2rem; 
             padding-bottom: 1rem;
         }
-        h1 {
-            margin-top: 0rem;
-            font-size: 1.8rem; /* Smaller title */
+        div[data-testid="column"] {
+            padding: 0px;
         }
-
-        /* Tweak expander to look cleaner */
-        .streamlit-expanderHeader {
-            font-size: 0.9rem;
-            font-weight: 600;
+        iframe {
+            width: 100%;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -37,46 +32,6 @@ NAME_TO_HEX = {
     "orange": "#FFA500",
     "black": "#000000"
 }
-
-
-def render_png_button(svg_string, width, height, scale_factor):
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <body>
-        <div id="svg-source" style="display:none;">{svg_string}</div>
-        <button id="btn-download" style="background-color: #4CAF50; border: none; color: white; padding: 6px 12px; text-align: center; text-decoration: none; display: inline-block; font-size: 12px; margin: 0px; cursor: pointer; border-radius: 4px; font-family: sans-serif;">
-            Download PNG
-        </button>
-        <script>
-            document.getElementById("btn-download").onclick = function() {{
-                var svgElement = document.getElementById("svg-source").querySelector("svg");
-                svgElement.setAttribute("width", "{width}px");
-                svgElement.setAttribute("height", "{height}px");
-                var svgData = new XMLSerializer().serializeToString(svgElement);
-                var img = new Image();
-                img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
-                img.onload = function() {{
-                    var canvas = document.createElement("canvas");
-                    var scale = {scale_factor};
-                    canvas.width = {width} * scale;
-                    canvas.height = {height} * scale;
-                    var ctx = canvas.getContext("2d");
-                    ctx.scale(scale, scale);
-                    ctx.fillStyle = "white";
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0, {width}, {height});
-                    var link = document.createElement('a');
-                    link.download = 'graph_high_res.png';
-                    link.href = canvas.toDataURL("image/png");
-                    link.click();
-                }};
-            }};
-        </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=35)
 
 
 def calculate_auto_scale_physical(val_min, val_max, size_cm):
@@ -113,6 +68,10 @@ minor_spacing_y = 10.0
 target_width_cm = 12.0
 target_height_cm = 12.0
 
+# Store grid bounds globally so we can default functions to this domain
+global_xmin = -10.0
+global_xmax = 10.0
+
 if mode == "Min/Max Window":
     st.sidebar.markdown("### Window Limits")
     link_xy = st.sidebar.checkbox("Link X/Y Scale", value=False)
@@ -128,18 +87,18 @@ if mode == "Min/Max Window":
 
     st.sidebar.markdown("### Axes")
     c_x1, c_x2 = st.sidebar.columns(2)
-    xmin = c_x1.number_input("X Min", value=-10.0, step=1.0)
-    xmax = c_x2.number_input("X Max", value=10.0, step=1.0)
+    global_xmin = c_x1.number_input("X Min", value=-10.0, step=1.0)
+    global_xmax = c_x2.number_input("X Max", value=10.0, step=1.0)
 
     c_y1, c_y2 = st.sidebar.columns(2)
     ymin = c_y1.number_input("Y Min", value=-10.0, step=1.0)
     ymax = c_y2.number_input("Y Max", value=10.0, step=1.0)
 
-    width_units = xmax - xmin
+    width_units = global_xmax - global_xmin
     height_units = ymax - ymin
 
     if auto_scale:
-        scale_x = calculate_auto_scale_physical(xmin, xmax, target_width_cm)
+        scale_x = calculate_auto_scale_physical(global_xmin, global_xmax, target_width_cm)
         if link_xy:
             scale_y = scale_x
         else:
@@ -151,13 +110,14 @@ if mode == "Min/Max Window":
         else:
             c_s1, c_s2 = st.sidebar.columns(2)
             scale_x = c_s1.number_input("X Scale", 0.1, 100.0, 1.0)
-            scale_y = c_s2.number_input("Y Scale", 0.1, 100.0, 1.0)
+            scale_y = c_s2.number_input("Y Scale", 0.1, 10.0, 1.0)
 
     x_cols = max(1, math.ceil(width_units / scale_x))
     y_cols = max(1, math.ceil(height_units / scale_y))
 
-    axis_x_pos_calc = abs(xmin) / scale_x if xmin <= 0 <= xmax else 0
-    axis_y_pos_calc = abs(ymin) / scale_y if ymin <= 0 <= ymax else 0
+    # CORRECTED LOGIC: Calculate axis offset from Top-Left corner
+    axis_x_pos_calc = -global_xmin / scale_x
+    axis_y_pos_calc = ymax / scale_y
 
     axis_x_pos = int(round(axis_x_pos_calc))
     axis_y_pos = int(round(axis_y_pos_calc))
@@ -173,6 +133,9 @@ else:  # Range & Center Mode
     x_range = c1.slider("X Axis Range (Total Units)", 5, 50, 10)
     y_range = c2.slider("Y Axis Range (Total Units)", 5, 50, 10)
 
+    global_xmin = -x_range / 2
+    global_xmax = x_range / 2
+
     link_xy = st.sidebar.checkbox("Link X/Y Scale", value=True)
     if link_xy:
         scale_x = st.sidebar.number_input("Grid Scale (Units per tick)", 0.1, 10.0, 1.0)
@@ -183,8 +146,11 @@ else:  # Range & Center Mode
         scale_y = c_s2.number_input("Y Scale", 0.1, 10.0, 1.0)
 
     c3, c4 = st.sidebar.columns(2)
-    axis_x_pos = c3.slider("Y-Axis Position (from left)", 0, x_range, int(x_range / 2))
-    axis_y_pos = c4.slider("X-Axis Position (from bottom)", 0, y_range, int(y_range / 2))
+    slider_x = c3.slider("Y-Axis Position (from left)", 0, x_range, int(x_range / 2))
+    slider_y = c4.slider("X-Axis Position (from bottom)", 0, y_range, int(y_range / 2))
+
+    axis_x_pos = slider_x
+    axis_y_pos = y_range - slider_y
 
 st.sidebar.markdown("### Axis Customization")
 c_tog1, c_tog2 = st.sidebar.columns(2)
@@ -205,6 +171,11 @@ c5, c6 = st.sidebar.columns(2)
 label_x = c5.text_input("X Label", "x")
 label_y = c6.text_input("Y Label", "y")
 
+show_label_bg = st.sidebar.checkbox("Label Backgrounds", value=True)
+bg_opacity = 0.85
+if show_label_bg:
+    bg_opacity = st.sidebar.slider("Opacity", 0.0, 1.0, 0.85, step=0.05)
+
 with st.sidebar.expander("Advanced Settings"):
     log_step = st.slider("Step Size (Log Scale)", -4.0, -1.0, -1.0)
     step_size = math.pow(10, log_step)
@@ -217,13 +188,42 @@ col_funcs, col_preview = st.columns([2, 3])
 # --- Init Session State ---
 if 'funcs_data' not in st.session_state:
     st.session_state.funcs_data = [
-        {'expr': "sin(x)", 'color': "#000000", 'thick': 1.5, 'label': False},
-        {'expr': "x^2/10 - 2", 'color': "#FF0000", 'thick': 1.5, 'label': False}
+        {
+            'expr': "sin(x)",
+            'color': "#000000",
+            'thick': 1.5,
+            'label': False,
+            'use_custom_domain': False,
+            'dom_min': -5.0,
+            'dom_max': 5.0,
+            'dom_start_style': 'None',  # None, Filled, Hollow
+            'dom_end_style': 'None',
+            'show_y_int': False,
+            'show_x_int': False,
+            'show_stat': False,
+            'show_inflection': False,
+            'exact_vals': True
+        }
     ]
 
 
 def add_func():
-    st.session_state.funcs_data.append({'expr': "", 'color': "#000000", 'thick': 1.5, 'label': False})
+    st.session_state.funcs_data.append({
+        'expr': "",
+        'color': "#000000",
+        'thick': 1.5,
+        'label': False,
+        'use_custom_domain': False,
+        'dom_min': global_xmin,
+        'dom_max': global_xmax,
+        'dom_start_style': 'None',
+        'dom_end_style': 'None',
+        'show_y_int': False,
+        'show_x_int': False,
+        'show_stat': False,
+        'show_inflection': False,
+        'exact_vals': True
+    })
 
 
 def remove_func(idx):
@@ -236,25 +236,59 @@ with col_funcs:
 
     for i, func_obj in enumerate(st.session_state.funcs_data):
         with st.expander(f"Function {i + 1}", expanded=True):
+            # Row 1: Expression and Delete
             c_expr, c_del = st.columns([5, 1])
-            func_obj['expr'] = c_expr.text_input("Expr", func_obj['expr'], key=f"expr_{i}",
-                                                 label_visibility="collapsed", placeholder="e.g. sin(x)")
+            func_obj['expr'] = c_expr.text_input("Expression", func_obj['expr'], key=f"expr_{i}",
+                                                 label_visibility="collapsed", placeholder="e.g. x^2 - 4")
             if c_del.button("🗑️", key=f"del_{i}"):
                 remove_func(i)
                 st.rerun()
 
+            # Row 2: Appearance
             c_col, c_thk, c_lbl = st.columns([1, 2, 2])
-
             current_col = func_obj['color']
             if not current_col.startswith('#'):
                 current_col = NAME_TO_HEX.get(current_col, "#000000")
-
             func_obj['color'] = c_col.color_picker("C", current_col, key=f"col_{i}", label_visibility="collapsed")
             func_obj['thick'] = c_thk.number_input("Thick", 0.5, 10.0, func_obj['thick'], step=0.5, key=f"thk_{i}",
                                                    label_visibility="collapsed")
-            func_obj['label'] = c_lbl.checkbox("Label", func_obj['label'], key=f"lbl_{i}")
+            func_obj['label'] = c_lbl.checkbox("Show Label", func_obj['label'], key=f"lbl_{i}")
 
-    if st.button("➕ Function"):
+            # Row 3: Domain & Endpoints
+            st.markdown("---")
+            func_obj['use_custom_domain'] = st.checkbox("Restrict Domain", func_obj['use_custom_domain'],
+                                                        key=f"use_dom_{i}")
+
+            if func_obj['use_custom_domain']:
+                c_d1, c_d2, c_d3, c_d4 = st.columns([2, 3, 3, 2])
+
+                # Styles
+                style_opts = ["None", "Filled", "Hollow"]
+
+                func_obj['dom_start_style'] = c_d1.selectbox("Start", style_opts, index=style_opts.index(
+                    func_obj.get('dom_start_style', 'None')), key=f"dss_{i}", label_visibility="collapsed")
+                func_obj['dom_min'] = c_d2.number_input("Min", value=float(func_obj.get('dom_min', -5.0)),
+                                                        key=f"dmin_{i}", label_visibility="collapsed")
+                func_obj['dom_max'] = c_d3.number_input("Max", value=float(func_obj.get('dom_max', 5.0)),
+                                                        key=f"dmax_{i}", label_visibility="collapsed")
+                func_obj['dom_end_style'] = c_d4.selectbox("End", style_opts, index=style_opts.index(
+                    func_obj.get('dom_end_style', 'None')), key=f"des_{i}", label_visibility="collapsed")
+
+            # Row 4: Key Features
+            st.markdown("###### Key Features")
+            c_f1, c_f2 = st.columns(2)
+            func_obj['show_y_int'] = c_f1.checkbox("Y-Intercept", func_obj.get('show_y_int', False), key=f"yint_{i}")
+            func_obj['show_x_int'] = c_f2.checkbox("X-Intercepts", func_obj.get('show_x_int', False), key=f"xint_{i}")
+
+            c_f3, c_f4 = st.columns(2)
+            func_obj['show_stat'] = c_f3.checkbox("Stationary Pts", func_obj.get('show_stat', False), key=f"stat_{i}")
+            func_obj['show_inflection'] = c_f4.checkbox("Inflection Pts", func_obj.get('show_inflection', False),
+                                                        key=f"inf_{i}")
+
+            func_obj['exact_vals'] = st.checkbox("Use Exact Values (Surds/Pi)", func_obj.get('exact_vals', True),
+                                                 key=f"exact_{i}")
+
+    if st.button("➕ Add Function"):
         add_func()
         st.rerun()
 
@@ -276,7 +310,9 @@ with col_preview:
         show_x_numbers=show_x_nums,
         show_y_numbers=show_y_nums,
         show_x_ticks=show_x_ticks,
-        show_y_ticks=show_y_ticks
+        show_y_ticks=show_y_ticks,
+        show_label_background=show_label_bg,  # New config
+        label_background_opacity=bg_opacity  # New config
     )
 
     engine = GraphEngine(config)
@@ -285,51 +321,62 @@ with col_preview:
 
     for func_obj in st.session_state.funcs_data:
         if func_obj['expr'].strip():
+            # Determine Domain
+            if func_obj['use_custom_domain']:
+                domain = (func_obj['dom_min'], func_obj['dom_max'])
+            else:
+                x_min_calc = -1 * scale_x * axis_x_pos
+                x_max_calc = scale_x * (x_range - axis_x_pos)
+                domain = (x_min_calc, x_max_calc)
+
+            # 1. Plot the Curve
             lbl = func_obj['expr'] if func_obj['label'] else None
             engine.plot_function(
                 func_obj['expr'],
+                domain=domain,
                 color=func_obj['color'],
                 base_step=step_size,
                 line_thickness=func_obj['thick'],
                 label_text=lbl
             )
 
+            # 2. Analyse and Plot Features
+            analyser = MathAnalyser(func_obj['expr'])
+
+            show_endpoints = func_obj['use_custom_domain'] and (
+                        func_obj['dom_start_style'] != "None" or func_obj['dom_end_style'] != "None")
+            ep_styles = (
+                func_obj.get('dom_start_style', 'None').lower(),
+                func_obj.get('dom_end_style', 'None').lower()
+            )
+
+            features = analyser.get_features(
+                domain=domain,
+                show_y_intercept=func_obj['show_y_int'],
+                show_x_intercepts=func_obj['show_x_int'],
+                show_stationary=func_obj['show_stat'],
+                show_inflection=func_obj['show_inflection'],
+                show_endpoints=show_endpoints,
+                endpoint_types=ep_styles,
+                exact_values=func_obj['exact_vals']
+            )
+
+            engine.draw_features(features)
+
     svg_string = engine.get_svg_string()
 
     # Top Control Row
-    c_head, c_scale, c_png, c_svg = st.columns([2, 2, 2, 2])
+    st.subheader("Preview")
 
-    with c_head:
-        st.subheader("Preview")
-    with c_scale:
-        scale_choice = st.number_input("PNG Scale", 1, 10, 4, label_visibility="collapsed")
-    with c_png:
-        render_png_button(svg_string, engine.width_pixels, engine.height_pixels, scale_choice)
-    with c_svg:
-        svg_physical = svg_string.replace('width="100%"', f'width="{target_width_cm:.2f}cm"')
-        svg_physical = svg_physical.replace('height="100%"', f'height="{target_height_cm:.2f}cm"')
-        b64 = base64.b64encode(svg_physical.encode('utf-8')).decode("utf-8")
-        href = f'<a href="data:image/svg+xml;base64,{b64}" download="graph.svg" style="background-color: #eee; border: 1px solid #ccc; color: #333; padding: 6px 12px; text-decoration: none; display: inline-block; font-size: 12px; margin-top: 0px; border-radius: 4px; font-family: sans-serif;">Download SVG</a>'
-        st.markdown(href, unsafe_allow_html=True)
+    # Scale Choice for PNG - Hardcoded
+    scale_choice = 10
 
-    # The Graph - Vertically Constrained
-    # Uses max-height: 75vh to ensure it fits on screen without scrolling
-    # Uses display: flex to center the image if it shrinks
-    st.markdown(f"""
-        <div style="
-            background-color: white; 
-            padding: 5px; 
-            border-radius: 5px; 
-            width: 100%; 
-            height: 100%;
-            max-height: 75vh;
-            display: flex; 
-            justify-content: center; 
-            align-items: flex-start; 
-            margin: 0 auto; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            overflow: auto;
-        ">
-            {svg_string.replace('<svg ', '<svg style="max-height: 75vh; width: auto; max-width: 100%;" ')}
-        </div>
-        """, unsafe_allow_html=True)
+    # Render Interactive Graph
+    render_interactive_graph(
+        svg_string,
+        engine.width_pixels,
+        engine.height_pixels,
+        target_width_cm,
+        target_height_cm,
+        scale_choice
+    )

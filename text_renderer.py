@@ -6,9 +6,9 @@ from typing import List, Optional, Union
 # --- 1. Font Metrics (Times New Roman Approximation) ---
 CHAR_WIDTHS = {
     'a': 0.45, 'b': 0.5, 'c': 0.45, 'd': 0.5, 'e': 0.45, 'f': 0.35, 'g': 0.5,
-    'h': 0.5, 'i': 0.32, 'j': 0.30, 'k': 0.5, 'l': 0.30, 'm': 0.80, 'n': 0.55,
+    'h': 0.5, 'i': 0.30, 'j': 0.30, 'k': 0.5, 'l': 0.30, 'm': 0.80, 'n': 0.52,
     'o': 0.5, 'p': 0.5, 'q': 0.5, 'r': 0.38, 's': 0.42, 't': 0.30, 'u': 0.5,
-    'v': 0.5, 'w': 0.7, 'x': 0.5, 'y': 0.55, 'z': 0.45,
+    'v': 0.5, 'w': 0.7, 'x': 0.5, 'y': 0.5, 'z': 0.45,
     'A': 0.7, 'B': 0.65, 'C': 0.65, 'D': 0.7, 'E': 0.6, 'F': 0.55, 'G': 0.7,
     'H': 0.7, 'I': 0.3, 'J': 0.4, 'K': 0.7, 'L': 0.6, 'M': 0.85, 'N': 0.7,
     'O': 0.7, 'P': 0.6, 'Q': 0.7, 'R': 0.65, 'S': 0.55, 'T': 0.6, 'U': 0.7,
@@ -45,12 +45,14 @@ class Box:
     @property
     def height(self): return self.ascent + self.descent
 
-    def render(self, dwg, x, y, color="black"): pass
+    def render(self, dwg, x, y, color="black", container=None):
+        # container allows rendering into a group instead of main dwg
+        pass
 
 
 @dataclass
 class SpaceBox(Box):
-    def render(self, dwg, x, y, color="black"): pass
+    def render(self, dwg, x, y, color="black", container=None): pass
 
 
 @dataclass
@@ -59,20 +61,21 @@ class CharBox(Box):
     font_size: float = 16.0
     is_math: bool = False
 
-    def render(self, dwg, x, y, color="black"):
+    def render(self, dwg, x, y, color="black", container=None):
+        target = container if container else dwg
         style = "italic" if self.is_math else "normal"
-        dwg.add(dwg.text(self.char, insert=(x, y), font_size=self.font_size, font_family="Times New Roman", fill=color,
-                         font_style=style))
+        target.add(dwg.text(self.char, insert=(x, y), font_size=self.font_size,
+                         font_family="Times New Roman", fill=color, font_style=style))
 
 
 @dataclass
 class RowBox(Box):
     children: List[Box] = field(default_factory=list)
 
-    def render(self, dwg, x, y, color="black"):
+    def render(self, dwg, x, y, color="black", container=None):
         curr_x = x
         for child in self.children:
-            child.render(dwg, curr_x, y, color)
+            child.render(dwg, curr_x, y, color, container)
             curr_x += child.width
 
 
@@ -83,15 +86,16 @@ class FracBox(Box):
     line_thick: float = 1.0
     axis_height: float = 4.0
 
-    def render(self, dwg, x, y, color="black"):
+    def render(self, dwg, x, y, color="black", container=None):
+        target = container if container else dwg
         mid_x = x + self.width / 2
         line_y = y - self.axis_height
-        dwg.add(dwg.line((x, line_y), (x + self.width, line_y), stroke=color, stroke_width=self.line_thick))
+        target.add(dwg.line((x, line_y), (x + self.width, line_y), stroke=color, stroke_width=self.line_thick))
         padding = self.line_thick * 2.0
         num_baseline = line_y - padding - self.numerator.descent
-        self.numerator.render(dwg, mid_x - self.numerator.width / 2, num_baseline, color)
+        self.numerator.render(dwg, mid_x - self.numerator.width / 2, num_baseline, color, container)
         den_baseline = line_y + padding + self.denominator.ascent
-        self.denominator.render(dwg, mid_x - self.denominator.width / 2, den_baseline, color)
+        self.denominator.render(dwg, mid_x - self.denominator.width / 2, den_baseline, color, container)
 
 
 @dataclass
@@ -100,7 +104,8 @@ class SqrtBox(Box):
     tick_width: float = 10.0
     line_thick: float = 1.0
 
-    def render(self, dwg, x, y, color="black"):
+    def render(self, dwg, x, y, color="black", container=None):
+        target = container if container else dwg
         w = self.content.width
         pad_top = self.line_thick * 3
         pad_right = self.line_thick * 2
@@ -112,8 +117,8 @@ class SqrtBox(Box):
         path.push('L', start_x + (self.tick_width * 0.4), y)
         path.push('L', start_x + self.tick_width, line_y)
         path.push('L', start_x + self.tick_width + w + pad_right, line_y)
-        dwg.add(path)
-        self.content.render(dwg, x + self.tick_width + (pad_right / 2), y, color)
+        target.add(path)
+        self.content.render(dwg, x + self.tick_width + (pad_right / 2), y, color, container)
 
 
 @dataclass
@@ -121,10 +126,10 @@ class SupBox(Box):
     base: Box = field(default_factory=lambda: Box(0, 0, 0))
     sup: Box = field(default_factory=lambda: Box(0, 0, 0))
 
-    def render(self, dwg, x, y, color="black"):
-        self.base.render(dwg, x, y, color)
+    def render(self, dwg, x, y, color="black", container=None):
+        self.base.render(dwg, x, y, color, container)
         nudge = self.base.width * 0.05
-        self.sup.render(dwg, x + self.base.width + nudge, y - (self.base.ascent * 0.4), color)
+        self.sup.render(dwg, x + self.base.width + nudge, y - (self.base.ascent * 0.4), color, container)
 
 
 class TexEngine:
@@ -141,7 +146,9 @@ class TexEngine:
         return self._layout(nodes, font_size)
 
     def _tokenize(self, text):
-        token_re = re.compile(r'(\\[a-zA-Z]+)|([{}^_])|([a-zA-Z0-9\+\-\=\.\(\)\s\|])')
+        # FIX: Added explicit capture for common functions (sin, cos, etc.) so they are treated as words
+        # FIX: Added comma ',' to the capture group
+        token_re = re.compile(r'(\\[a-zA-Z]+)|(sin|cos|tan|csc|sec|cot|ln|log|exp)|([{}^_])|([a-zA-Z0-9\+\-\=\.\,\(\)\s\|])')
         tokens = []
         for match in token_re.finditer(text):
             s = match.group(0)
@@ -162,9 +169,12 @@ class TexEngine:
                 group, _ = self._parse_group(tokens, True)
                 nodes.append({'type': 'group', 'content': group})
 
-            # NEW: Handle \left and \right by ignoring them and parsing next char
             elif tok in [r'\left', r'\right']:
                 continue
+
+            # NEW: Explicitly handle simple text functions (parsed from the new regex group)
+            elif tok in ['sin', 'cos', 'tan', 'csc', 'sec', 'cot', 'ln', 'log', 'exp']:
+                nodes.append({'type': 'func', 'val': tok})
 
             elif tok == '^':
                 if not nodes: continue

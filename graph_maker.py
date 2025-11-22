@@ -6,14 +6,12 @@ import svgwrite
 import sympy as sp
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application, \
     convert_xor
-# Import the new renderer
 from text_renderer import TexEngine
 
 
 # --- 1. Configuration & Defaults ---
 @dataclass
 class GraphConfig:
-    """Configuration for the Graph Engine."""
     file_name: str = "Graph"
     grid_cols: Tuple[int, int] = (5, 5)
     grid_scale: Tuple[float, float] = (5.0, 5.0)
@@ -30,16 +28,17 @@ class GraphConfig:
     axis_thickness: float = 1.5
     minor_spacing: Tuple[float, float] = (10.0, 10.0)
 
-    # Visibility Toggles
     show_minor_grid: bool = True
     show_major_grid: bool = True
     show_x_axis: bool = True
     show_y_axis: bool = True
     show_x_numbers: bool = True
     show_y_numbers: bool = True
-    # NEW: Tick Marks (the small lines)
     show_x_ticks: bool = True
     show_y_ticks: bool = True
+
+    show_label_background: bool = True
+    label_background_opacity: float = 0.85
 
     @property
     def pixels_per_unit_x(self) -> float:
@@ -58,8 +57,9 @@ class GraphEngine:
 
         self.num_major_x = int(self.cfg.grid_cols[0])
         self.num_major_y = int(self.cfg.grid_cols[1])
+
         self.idx_xaxis = int(self.cfg.axis_pos[0])
-        self.idx_yaxis = self.num_major_y - int(self.cfg.axis_pos[1])
+        self.idx_yaxis = int(self.cfg.axis_pos[1])
 
         self.tick_h = 7
 
@@ -95,8 +95,11 @@ class GraphEngine:
         return px, py
 
     def render_text_tex_lite(self, x: float, y: float, text: str, anchor="start", color="black", italic=False,
-                             alignment_baseline="auto"):
-        box = self.tex_engine.parse_layout(text, font_size=self.cfg.font_size)
+                             alignment_baseline="auto", font_size=None, container=None):
+        if font_size is None:
+            font_size = self.cfg.font_size
+
+        box = self.tex_engine.parse_layout(text, font_size=font_size)
 
         start_x = x
         if anchor == "middle":
@@ -107,7 +110,9 @@ class GraphEngine:
         if box.left_overflow > 0:
             start_x += box.left_overflow
 
-        box.render(self.dwg, start_x, y, color)
+        # Support rendering into a group if provided
+        target = container if container else self.dwg
+        box.render(self.dwg, start_x, y, color, container=target)
 
     def _draw_arrowhead(self, x, y, direction="right"):
         length = 12
@@ -132,7 +137,6 @@ class GraphEngine:
         x_start, x_end = self.margin_left, self.width_pixels - self.margin_right
         y_start, y_end = self.margin_top, self.height_pixels - self.margin_bottom
 
-        # Vertical Grid Lines
         for i in range(self.num_major_x * c.minor_per_major[0] + 1):
             px = x_start + i * c.minor_spacing[0]
             is_major = (i % c.minor_per_major[0] == 0)
@@ -146,13 +150,11 @@ class GraphEngine:
                 width = c.grid_thickness_major if is_major else c.grid_thickness_minor
                 self.dwg.add(self.dwg.line(start=(px, y_start), end=(px, y_end), stroke='black', stroke_width=width))
 
-            # X-Ticks: Controlled by show_x_ticks toggle
             if c.show_x_axis and c.show_x_ticks and is_major and i != self.idx_yaxis * c.minor_per_major[0]:
                 self.dwg.add(
                     self.dwg.line(start=(px, self.origin_y - self.tick_h), end=(px, self.origin_y + self.tick_h),
                                   stroke='black', stroke_width=c.axis_thickness))
 
-        # Horizontal Grid Lines
         for i in range(self.num_major_y * c.minor_per_major[1] + 1):
             py = y_start + i * c.minor_spacing[1]
             is_major = (i % c.minor_per_major[1] == 0)
@@ -166,13 +168,11 @@ class GraphEngine:
                 width = c.grid_thickness_major if is_major else c.grid_thickness_minor
                 self.dwg.add(self.dwg.line(start=(x_start, py), end=(x_end, py), stroke='black', stroke_width=width))
 
-            # Y-Ticks: Controlled by show_y_ticks toggle
             if c.show_y_axis and c.show_y_ticks and is_major and i != self.idx_xaxis * c.minor_per_major[1]:
                 self.dwg.add(
                     self.dwg.line(start=(self.origin_x - self.tick_h, py), end=(self.origin_x + self.tick_h, py),
                                   stroke='black', stroke_width=c.axis_thickness))
 
-        # Main Axes
         if c.show_y_axis:
             y_axis_top = y_start - 15
             self.dwg.add(
@@ -189,29 +189,25 @@ class GraphEngine:
 
     def draw_axis_labels(self):
         c = self.cfg
-        x_start = self.margin_left
 
         if c.show_x_axis and c.show_x_numbers:
             for i in range(self.num_major_x * c.minor_per_major[0] + 1):
                 is_major = (i % c.minor_per_major[0] == 0)
                 if is_major and i != self.idx_yaxis * c.minor_per_major[0]:
-                    px = x_start + i * c.minor_spacing[0]
+                    px = self.margin_left + i * c.minor_spacing[0]
                     math_val = (i / c.minor_per_major[0] - self.idx_yaxis) * c.grid_scale[0]
                     label = self._format_number(math_val, c.tick_rounding[0])
-
                     w, _ = self.tex_engine.measure(label, c.font_size)
                     self.dwg.add(self.dwg.rect(insert=(px - w / 2, self.origin_y + 9), size=(w, 12), fill='white'))
                     self.render_text_tex_lite(px, self.origin_y + 20, label, anchor="middle")
 
         if c.show_y_axis and c.show_y_numbers:
-            y_start = self.margin_top
             for i in range(self.num_major_y * c.minor_per_major[1] + 1):
                 is_major = (i % c.minor_per_major[1] == 0)
                 if is_major and i != self.idx_xaxis * c.minor_per_major[1]:
-                    py = y_start + i * c.minor_spacing[1]
+                    py = self.margin_top + i * c.minor_spacing[1]
                     math_val = (self.idx_xaxis - i / c.minor_per_major[1]) * c.grid_scale[1]
                     label = self._format_number(math_val, c.tick_rounding[1])
-
                     w, _ = self.tex_engine.measure(label, c.font_size)
                     self.dwg.add(self.dwg.rect(insert=(self.origin_x - 10 - w, py - 6), size=(w + 2, 12), fill='white'))
                     self.render_text_tex_lite(self.origin_x - 10, py + 4, label, anchor="end")
@@ -225,6 +221,66 @@ class GraphEngine:
             x_axis_right = x_grid_end + 15
             x_label_pos = x_axis_right + 12 + 6
             self.render_text_tex_lite(x_label_pos, self.origin_y + 2, c.axis_labels[0], anchor="start", italic=True)
+
+    def draw_features(self, features: List):
+        for ft in features:
+            px, py = self.math_to_screen(ft.x, ft.y)
+
+            if not (-100 <= px <= self.width_pixels + 100 and -100 <= py <= self.height_pixels + 100):
+                continue
+
+            # Draw Marker (Static)
+            if ft.marker_style == 'filled':
+                self.dwg.add(self.dwg.circle(center=(px, py), r=3.5, fill="black", stroke="none"))
+            elif ft.marker_style == 'hollow':
+                self.dwg.add(self.dwg.circle(center=(px, py), r=3.5, fill="white", stroke="black", stroke_width=1.5))
+            elif ft.marker_style == 'cross':
+                self.dwg.add(
+                    self.dwg.line(start=(px - 3, py - 3), end=(px + 3, py + 3), stroke="black", stroke_width=1.5))
+                self.dwg.add(
+                    self.dwg.line(start=(px - 3, py + 3), end=(px + 3, py - 3), stroke="black", stroke_width=1.5))
+
+            # Draw Label (Draggable)
+            if ft.label:
+                offset_y = 15
+                if ft.feature_type == 'stationary':
+                    offset_y = -10
+                elif ft.feature_type == 'intercept':
+                    offset_y = 15
+
+                if py < 50: offset_y = 15
+
+                # --- UNIQUE ID GENERATION ---
+                # We create a deterministic ID based on label content + original position
+                # This allows JS to find this element again even after Python regenerates it
+                safe_label = re.sub(r'[^a-zA-Z0-9]', '', ft.label)
+                unique_id = f"lbl_{safe_label}_{int(px)}_{int(py)}"
+
+                # Use id_ parameter for svgwrite
+                label_group = self.dwg.g(class_="draggable-label", id_=unique_id)
+                self.dwg.add(label_group)
+
+                font_size_label = 9
+                if self.cfg.show_label_background:
+                    box = self.tex_engine.parse_layout(ft.label, font_size=font_size_label)
+                    w = box.width
+                    h = box.height
+                    padding = 2
+
+                    rect_x = px - w / 2 - padding
+                    rect_y = (py + offset_y) - box.ascent - padding
+                    rect_w = w + (padding * 2)
+                    rect_h = h + (padding * 2)
+
+                    label_group.add(self.dwg.rect(
+                        insert=(rect_x, rect_y),
+                        size=(rect_w, rect_h),
+                        fill="white",
+                        fill_opacity=str(self.cfg.label_background_opacity)
+                    ))
+
+                self.render_text_tex_lite(px, py + offset_y, ft.label, anchor="middle", font_size=font_size_label,
+                                          color="#333", container=label_group)
 
     def plot_function(self, expr_str: str, domain: Tuple[float, float] = None, color="black", base_step=0.1,
                       line_thickness=1.5, label_text=None):
@@ -241,10 +297,6 @@ class GraphEngine:
 
             f = sp.lambdify(x, expr, 'math')
             df = sp.lambdify(x, sp.diff(expr, x), 'math')
-
-            if label_text is not None:
-                lat = sp.latex(expr)
-                label_text = f"y = {lat}"
 
             singularities = []
             try:
@@ -284,7 +336,6 @@ class GraphEngine:
 
         while a < domain[1]:
             b = min(a + step, domain[1])
-
             next_start = b
             segment_break = False
 
@@ -320,10 +371,8 @@ class GraphEngine:
                         c1y = ay_px - (ma * scale_factor * (self.cfg.pixels_per_unit_y / self.cfg.pixels_per_unit_x))
                         c2x = bx_px - scale_factor
                         c2y = by_px + (mb * scale_factor * (self.cfg.pixels_per_unit_y / self.cfg.pixels_per_unit_x))
-
                         c1y = clamp(c1y)
                         c2y = clamp(c2y)
-
                         path_data.append(f"C {c1x:.2f},{c1y:.2f} {c2x:.2f},{c2y:.2f} {bx_px:.2f},{by_px:.2f}")
 
             a = next_start
@@ -335,10 +384,82 @@ class GraphEngine:
             path['clip-path'] = f"url(#{self.clip_id})"
             self.dwg.add(path)
 
-            if label_text and last_valid_point:
-                lx, ly = last_valid_point
-                self.render_text_tex_lite(lx + 5, ly, label_text, color=color, anchor="start",
-                                          alignment_baseline="middle")
+            # --- MAIN LABEL DRAWING LOGIC ---
+            if label_text:
+                # 1. Calculate Logic Position (Math Coords)
+                target_x = 0.0
+                target_y = None
+
+                # Try to place near Y-intercept (x=0) if within domain
+                if domain[0] <= 0 <= domain[1]:
+                    try:
+                        val = float(f(0))
+                        if math.isfinite(val):
+                            target_y = val
+                            target_x = 0.0
+                    except:
+                        pass
+
+                # Fallback: Midpoint of domain if x=0 is invalid or out of view
+                if target_y is None:
+                    mid_x = (domain[0] + domain[1]) / 2
+                    try:
+                        val = float(f(mid_x))
+                        if math.isfinite(val):
+                            target_y = val
+                            target_x = mid_x
+                    except:
+                        pass
+
+                # Determine Screen Coordinates
+                px, py = 0, 0
+                valid_pos = False
+                if target_y is not None:
+                    px, py = self.math_to_screen(target_x, target_y)
+                    valid_pos = True
+                elif last_valid_point:
+                    # Last resort: end of the line
+                    px, py = last_valid_point
+                    valid_pos = True
+
+                if valid_pos:
+                    # Offset to avoid covering the line/point
+                    offset_x = 15
+                    offset_y = -15
+
+                    # Create Draggable Group
+                    # ID is based on expression string (e.g. lbl_func_5sinx)
+                    safe_label = re.sub(r'[^a-zA-Z0-9]', '', label_text)
+                    unique_id = f"lbl_func_{safe_label}"
+
+                    label_group = self.dwg.g(class_="draggable-label", id_=unique_id)
+                    self.dwg.add(label_group)
+
+                    # Optional Background Box
+                    font_size_label = 12
+                    if self.cfg.show_label_background:
+                        box = self.tex_engine.parse_layout(label_text, font_size=font_size_label)
+                        w = box.width
+                        h = box.height
+                        padding = 2
+
+                        rect_x = (px + offset_x) - w / 2 - padding
+                        rect_y = (py + offset_y) - box.ascent - padding
+                        rect_w = w + (padding * 2)
+                        rect_h = h + (padding * 2)
+
+                        label_group.add(self.dwg.rect(
+                            insert=(rect_x, rect_y),
+                            size=(rect_w, rect_h),
+                            fill="white",
+                            fill_opacity=str(self.cfg.label_background_opacity)
+                        ))
+
+                    # Render Text
+                    self.render_text_tex_lite(px + offset_x, py + offset_y, label_text,
+                                              color=color, anchor="middle",
+                                              font_size=font_size_label,
+                                              container=label_group)
 
     def get_svg_string(self):
         return self.dwg.tostring()
