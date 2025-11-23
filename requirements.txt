@@ -1,3 +1,5 @@
 streamlit
 svgwrite
 sympy
+numpy
+pandas
