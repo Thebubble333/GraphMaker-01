@@ -84,6 +84,7 @@ if show_label_bg:
     bg_opacity = st.sidebar.slider("Opacity", 0.0, 1.0, 1.0, step=0.05)
 
 with st.sidebar.expander("Advanced Calibration"):
+    show_minor = st.checkbox("Show Minor Gridlines", value=True)
     minor_subs = st.slider("Minor Subdivisions", 1, 10, 5)
     off_box_lbl = st.slider("Box Label Y", -50.0, 50.0, -8.0, step=1.0)
     off_x_num = st.slider("Axis Numbers Y", -50.0, 50.0, 10.0, step=1.0)
@@ -195,7 +196,7 @@ with col_preview:
         minor_per_major=(minor_subs, minor_subs),
         show_vertical_grid=True,
         show_horizontal_grid=False,
-        show_minor_grid=False,
+        show_minor_grid=show_minor,
         show_y_axis=False,
         show_border=True,
         show_x_axis=False,
