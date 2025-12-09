@@ -173,8 +173,9 @@ class TexEngine:
         return self._layout(nodes, font_size)
 
     def _tokenize(self, text):
+        # Added \$ to the last capturing group
         token_re = re.compile(
-            r'(\\[a-zA-Z]+)|(sin|cos|tan|csc|sec|cot|ln|log|exp)|([{}^_])|([a-zA-Z0-9\+\-\=\.\,\(\)\s\|])')
+            r'(\\[a-zA-Z]+)|(sin|cos|tan|csc|sec|cot|ln|log|exp)|([{}^_])|([a-zA-Z0-9\+\-\=\.\,\(\)\s\|\$])')
         tokens = []
         for match in token_re.finditer(text):
             s = match.group(0)
@@ -257,7 +258,7 @@ class TexEngine:
             return self._layout([n], size)
 
         def get_vert_metrics(char, fsize):
-            if char in "()[]{}|/\\bdfhklt1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            if char in "()[]{}|/\\bdfhklt1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ$":
                 return fsize * 0.8, fsize * 0.25
             elif char in "gpqy":
                 return fsize * 0.55, fsize * 0.35

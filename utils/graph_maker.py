@@ -67,6 +67,10 @@ class GraphConfig:
     offset_yaxis_label_x: float = 0.0
     offset_yaxis_label_y: float = 0.0
 
+    force_external_margins: bool = False
+    x_label_pos: str = "bottom"
+    y_label_pos: str = "side_horizontal"
+    
     @property
     def pixels_per_unit_x(self) -> float:
         return (self.minor_spacing[0] * self.minor_per_major[0]) / self.grid_scale[0]
