@@ -1,4 +1,10 @@
 import streamlit as st
+import sys
+import os
+
+# Add parent directory to path to import utils
+sys.path.append(os.path.dirname(__file__))
+
 from utils.nav import render_sidebar
 
 st.set_page_config(
@@ -23,12 +29,13 @@ This tool is designed to create **high-quality, publication-ready mathematical g
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Functions")
-    st.info("Plot mathematical functions with exact grids.")
+    st.subheader("Functions & Algebra")
+    st.info("Plot functions and number lines.")
 
     st.page_link("pages/1_Function_Grapher.py", label="Function Grapher", icon="📈", use_container_width=True)
-    # Fix: Used double backslash for pi (\\pi) to avoid invalid escape sequence warning
-    st.markdown("* $y = f(x)$ plots\n* Intersections & Turning Points\n* Exact Surds & $\\pi$")
+    st.page_link("pages/5_Number_Line.py", label="Number Line Plotter", icon="➖", use_container_width=True)
+
+    st.markdown("* $y = f(x)$ plots\n* Inequalities & Intervals\n* Exact Surds & $\\pi$")
 
 with col2:
     st.subheader("Statistics")
@@ -37,7 +44,9 @@ with col2:
     st.page_link("pages/2_Box_Plots.py", label="Box Plots", icon="📦", use_container_width=True)
     st.page_link("pages/3_Histograms.py", label="Histograms", icon="📊", use_container_width=True)
     st.page_link("pages/4_Scatter_Plots.py", label="Scatter Plots", icon="📉", use_container_width=True)
-    # Removed Residual Plots and Time Series as requested
+    st.page_link("pages/6_Visual_Quartiles.py", label="Visual Quartiles", icon="🔴", use_container_width=True)
+    # --- NEW LINK ADDED HERE ---
+    st.page_link("pages/7_Stem_and_Leaf.py", label="Stem & Leaf Plots", icon="🌿", use_container_width=True)
 
 st.markdown("---")
-st.caption("GraphMaker v2.1")
+st.caption("GraphMaker v2.4")
