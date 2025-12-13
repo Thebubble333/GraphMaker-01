@@ -226,17 +226,34 @@ def render_interactive_graph(svg_string: str, width_px: float, height_px: float,
 
             // --- AUTO FIT HELPERS ---
             
-            // 1. Set ViewBox to the exact content boundary (plus padding)
+            // 1. Set ViewBox to the exact content boundary (ignoring infinite graphs)
             function setToBeContentBox() {{
+                // A. Temporarily hide the "function-layer" elements
+                //    This prevents asymptotes (like 1/x) from blowing up the bounding box
+                const graphLines = svgEl.querySelectorAll('.function-layer');
+                const restoreList = [];
+                
+                graphLines.forEach(el => {{
+                    restoreList.push({{element: el, originalDisplay: el.style.display}});
+                    el.style.display = 'none';
+                }});
+
+                // B. Measure the "Safe" content (Grid, Axes, Labels)
                 const bbox = svgEl.getBBox();
+                
+                // C. Restore the graph lines
+                restoreList.forEach(item => {{
+                    item.element.style.display = item.originalDisplay;
+                }});
+
                 const pad = 20;
                 const x = bbox.x - pad;
                 const y = bbox.y - pad;
                 const w = bbox.width + (pad * 2);
                 const h = bbox.height + (pad * 2);
                 
+                // Note the double curly braces for the JS template variables below
                 svgEl.setAttribute('viewBox', `${{x}} ${{y}} ${{w}} ${{h}}`);
-                // Match element size to viewbox size to ensure aspect ratio is respected by wrapper
                 svgEl.setAttribute('width', w);
                 svgEl.setAttribute('height', h);
             }}

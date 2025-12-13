@@ -173,9 +173,8 @@ class TexEngine:
         return self._layout(nodes, font_size)
 
     def _tokenize(self, text):
-        # Added \$ to the last capturing group
         token_re = re.compile(
-            r'(\\[a-zA-Z]+)|(sin|cos|tan|csc|sec|cot|ln|log|exp)|([{}^_])|([a-zA-Z0-9\+\-\=\.\,\(\)\s\|\$])')
+            r'(\\[a-zA-Z]+)|(?<![a-zA-Z])(sin|cos|tan|csc|sec|cot|ln|log|exp)(?![a-zA-Z])|([{}^_])|([a-zA-Z0-9\+\-\=\.\,\(\)\s\|\$\%\!\:\*\<\>\[\]\'\?])')
         tokens = []
         for match in token_re.finditer(text):
             s = match.group(0)
@@ -312,11 +311,12 @@ class TexEngine:
 
                 num_box = self._layout(to_list(num_node), font_size * 0.8)
                 den_box = self._layout(to_list(den_node), font_size * 0.8)
-                w = max(num_box.width, den_box.width) + 6
+                w = max(num_box.width, den_box.width) + 0
                 axis_h = font_size * 0.28
                 thick = font_size * LINE_THICKNESS_FACTOR
                 padding = thick * 2.0
                 new_asc = axis_h + padding + num_box.descent + num_box.ascent
+                # Added extra buffer (+ 4) to prevent denominator clipping
                 new_desc = den_box.ascent + den_box.descent + padding - axis_h
                 boxes.append(FracBox(width=w, ascent=new_asc, descent=new_desc, numerator=num_box, denominator=den_box,
                                      line_thick=thick, axis_height=axis_h))

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; background-color: white; font-family: sans-serif; overflow: hidden; }
+        
+        /* Controls Bar */
+        .controls {
+            display: flex; gap: 10px; padding: 8px 12px; background: #f8f9fa; border-bottom: 1px solid #ddd;
+            align-items: center; font-size: 13px;
+        }
+        .btn {
+            border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; color: white; font-weight: 500; font-size: 12px;
+        }
+        .btn-blue { background: #2196F3; } .btn-blue:hover { background: #1976D2; }
+        .btn-green { background: #4CAF50; } .btn-green:hover { background: #388E3C; }
+        
+        #canvas-container {
+            display: flex; justify-content: center; align-items: center;
+            /* Make this fill more height */
+            height: calc(100vh - 50px); 
+            overflow: auto;
+            background-color: #f0f2f6; /* Gray background behind canvas */
+        }
+        svg {
+            background: white; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); 
+            cursor: default;
+        }
+        
+        /* Drag Styles */
+        .shape-body { cursor: grab; transition: fill-opacity 0.2s; }
+        .shape-body:active { cursor: grabbing; fill-opacity: 0.6; }
+        .vertex { cursor: crosshair; transition: r 0.1s; }
+        .vertex:hover { r: 7; }
+        
+        .grid-line { stroke: #e0e0e0; stroke-width: 1; vector-effect: non-scaling-stroke; }
+        .axis-line { stroke: #ccc; stroke-width: 1.5; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <b>Interactive Mode</b>
+        <span style="color:#666; margin-left:10px;">Drag shapes or vertices.</span>
+        <div style="flex-grow:1"></div>
+        <button class="btn btn-green" onclick="downloadPNG()">Download PNG</button>
+        <button class="btn btn-blue" onclick="downloadSVG()">Download SVG</button>
+    </div>
+    
+    <div id="canvas-container">
+        <svg id="geo-canvas"></svg>
+    </div>
+
+    <script>
+        // --- STATE ---
+        let SHAPES = [];
+        const svg = document.getElementById('geo-canvas');
+        let selectedElement = null;
+        let dragMode = null; 
+        let startMouse = {x:0, y:0};
+        let activeShapeId = null;
+        let activeVertexIdx = null;
+        let didMove = false;
+        let SHOW_GRID = false;
+
+        // --- GRID RENDERER ---
+        function drawGrid(width, height) {
+            if (!SHOW_GRID) return;
+            
+            const gridSize = 30; // Matches Python scale roughly
+            const cx = width / 2;
+            const cy = height / 2;
+            
+            // Create a group for grid so it stays at the back
+            let gridGroup = document.getElementById('grid-group');
+            if(!gridGroup) {
+                gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                gridGroup.setAttribute('id', 'grid-group');
+                svg.prepend(gridGroup);
+            } else {
+                gridGroup.innerHTML = '';
+            }
+
+            // Vertical Lines
+            for (let x = cx % gridSize; x < width; x += gridSize) {
+                const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                l.setAttribute("x1", x); l.setAttribute("y1", 0);
+                l.setAttribute("x2", x); l.setAttribute("y2", height);
+                l.setAttribute("class", "grid-line");
+                gridGroup.appendChild(l);
+            }
+            
+            // Horizontal Lines
+            for (let y = cy % gridSize; y < height; y += gridSize) {
+                const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                l.setAttribute("x1", 0); l.setAttribute("y1", y);
+                l.setAttribute("x2", width); l.setAttribute("y2", y);
+                l.setAttribute("class", "grid-line");
+                gridGroup.appendChild(l);
+            }
+        }
+
+        // --- SHAPE RENDERER ---
+        function render(shapes) {
+            // Remove existing shapes (keep grid)
+            const oldGroups = document.querySelectorAll('.shape-group');
+            oldGroups.forEach(g => g.remove());
+            
+            shapes.forEach(shape => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute('class', 'shape-group');
+                
+                // 1. Polygon Body
+                const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                const ptsStr = shape.points.map(p => `${p.x},${p.y}`).join(" ");
+                poly.setAttribute("points", ptsStr);
+                poly.setAttribute("fill", shape.color);
+                poly.setAttribute("stroke", shape.stroke);
+                poly.setAttribute("stroke-width", shape.stroke_width);
+                poly.setAttribute("class", "shape-body");
+                poly.setAttribute("fill-opacity", "0.9");
+                
+                poly.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    startDrag(e, 'SHAPE', shape.id);
+                });
+                
+                group.appendChild(poly);
+                
+                // 2. Vertices
+                if(shape.show_vertices) {
+                    shape.points.forEach((p, idx) => {
+                        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                        c.setAttribute("cx", p.x);
+                        c.setAttribute("cy", p.y);
+                        c.setAttribute("r", 4.5);
+                        c.setAttribute("fill", "rgba(0,0,0,0.7)");
+                        c.setAttribute("stroke", "white");
+                        c.setAttribute("stroke-width", "1.5");
+                        c.setAttribute("class", "vertex");
+                        
+                        c.addEventListener('mousedown', (e) => {
+                            e.stopPropagation();
+                            startDrag(e, 'VERTEX', shape.id, idx);
+                        });
+                        group.appendChild(c);
+                    });
+                }
+                
+                // 3. Label
+                if(shape.label) {
+                    const center = getPolygonCenter(shape.points);
+                    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    txt.setAttribute("x", center.x);
+                    txt.setAttribute("y", center.y);
+                    txt.setAttribute("text-anchor", "middle");
+                    txt.setAttribute("dominant-baseline", "middle");
+                    txt.setAttribute("pointer-events", "none");
+                    txt.setAttribute("fill", "black");
+                    txt.setAttribute("font-family", "serif");
+                    txt.textContent = shape.label;
+                    group.appendChild(txt);
+                }
+
+                svg.appendChild(group);
+            });
+        }
+
+        // --- HELPERS ---
+        function getPolygonCenter(points) {
+            let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+            points.forEach(p => {
+                if(p.x < minX) minX=p.x; if(p.x > maxX) maxX=p.x;
+                if(p.y < minY) minY=p.y; if(p.y > maxY) maxY=p.y;
+            });
+            return {x: (minX+maxX)/2, y: (minY+maxY)/2};
+        }
+
+        function getMousePos(evt) {
+            const CTM = svg.getScreenCTM();
+            return {
+                x: (evt.clientX - CTM.e) / CTM.a,
+                y: (evt.clientY - CTM.f) / CTM.d
+            };
+        }
+
+        // --- DRAG LOGIC ---
+        function startDrag(e, mode, shapeId, vertIdx=null) {
+            dragMode = mode;
+            activeShapeId = shapeId;
+            activeVertexIdx = vertIdx;
+            startMouse = getMousePos(e);
+            didMove = false;
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            if(!dragMode) return;
+            e.preventDefault();
+            didMove = true;
+            
+            const mouse = getMousePos(e);
+            const dx = mouse.x - startMouse.x;
+            const dy = mouse.y - startMouse.y;
+            
+            const shape = SHAPES.find(s => s.id === activeShapeId);
+            if(!shape) return;
+
+            if(dragMode === 'SHAPE') {
+                shape.points.forEach(p => { p.x += dx; p.y += dy; });
+            } else if (dragMode === 'VERTEX') {
+                shape.points[activeVertexIdx].x += dx;
+                shape.points[activeVertexIdx].y += dy;
+            }
+            
+            startMouse = mouse;
+            render(SHAPES); // Visual update only
+        });
+
+        window.addEventListener('mouseup', () => {
+            if(dragMode && didMove) {
+                // Sync back to Python
+                sendMessageToStreamlit(SHAPES);
+            }
+            dragMode = null;
+            activeShapeId = null;
+            didMove = false;
+        });
+
+        // --- STREAMLIT COMM ---
+        function sendMessageToStreamlit(data) {
+            try {
+                window.parent.postMessage({
+                    isStreamlitMessage: true,
+                    type: "streamlit:setComponentValue",
+                    value: data
+                }, "*");
+            } catch(e) { console.error(e); }
+        }
+
+        function onDataReceived(event) {
+            if (event.data.type !== "streamlit:render") return;
+            
+            const args = event.data.args;
+            const newShapes = args.shapes;
+            const width = args.width;
+            const height = args.height;
+            SHOW_GRID = args.show_grid;
+
+            if(!dragMode) {
+                SHAPES = JSON.parse(JSON.stringify(newShapes));
+                svg.setAttribute('width', width);
+                svg.setAttribute('height', height);
+                svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+                drawGrid(width, height);
+                render(SHAPES);
+            }
+            
+            document.getElementById('canvas-container').style.height = (height + 20) + "px";
+            window.parent.postMessage({
+                type: "streamlit:setFrameHeight",
+                height: height + 80
+            }, "*");
+        }
+        
+        window.addEventListener("message", onDataReceived);
+        
+        // Handshake
+        window.parent.postMessage({
+            isStreamlitMessage: true,
+            type: "streamlit:componentReady",
+            apiVersion: 1
+        }, "*");
+
+        // --- DOWNLOADERS ---
+        function downloadSVG() {
+            const clone = svg.cloneNode(true);
+            const data = new XMLSerializer().serializeToString(clone);
+            const blob = new Blob([data], {type: "image/svg+xml;charset=utf-8"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'geometry.svg'; a.click();
+        }
+
+        function downloadPNG() {
+            const clone = svg.cloneNode(true);
+            const data = new XMLSerializer().serializeToString(clone);
+            const img = new Image();
+            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(data)));
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                canvas.width = svg.getAttribute('width');
+                canvas.height = svg.getAttribute('height');
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = "white"; ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.drawImage(img, 0, 0);
+                const a = document.createElement('a');
+                a.download = 'geometry.png';
+                a.href = canvas.toDataURL('image/png'); a.click();
+            };
+        }
+    </script>
+</body>
+</html>

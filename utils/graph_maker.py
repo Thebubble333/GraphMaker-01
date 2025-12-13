@@ -1,9 +1,11 @@
 import math
+from fractions import Fraction
 import re
 from dataclasses import dataclass, field
 from typing import Tuple, List, Dict, Any, Callable, Optional
 import svgwrite
 import sympy as sp
+import numpy as np
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application, \
     convert_xor
 
@@ -70,7 +72,12 @@ class GraphConfig:
     force_external_margins: bool = False
     x_label_pos: str = "bottom"
     y_label_pos: str = "side_horizontal"
-    
+
+    pi_x_axis: bool = False
+    pi_y_axis: bool = False
+
+    show_zero_label: bool = True
+
     @property
     def pixels_per_unit_x(self) -> float:
         return (self.minor_spacing[0] * self.minor_per_major[0]) / self.grid_scale[0]
@@ -79,6 +86,33 @@ class GraphConfig:
     def pixels_per_unit_y(self) -> float:
         return (self.minor_spacing[1] * self.minor_per_major[1]) / self.grid_scale[1]
 
+
+def format_pi_value(val: float) -> str:
+    r"""Converts a float to a LaTeX pi fraction string (e.g. 1.57 -> \frac{\pi}{2})."""
+    if abs(val) < 1e-9:
+        return "0"
+
+    # Determine the coefficient of pi
+    coeff = val / math.pi
+    frac = Fraction(coeff).limit_denominator(100)
+
+    num = frac.numerator
+    den = frac.denominator
+
+    # Build LaTeX string
+    if den == 1:
+        if num == 1: return r"\pi"
+        if num == -1: return r"-\pi"
+        return f"{num}" + r"\pi"
+    else:
+        # Denominator exists
+        if num == 1:
+            base = r"\pi"
+        elif num == -1:
+            base = r"-\pi"
+        else:
+            base = f"{num}" + r"\pi"
+        return r"\frac{" + base + r"}{" + str(den) + r"}"
 
 # --- 3. The Graph Engine ---
 class GraphEngine:
@@ -263,16 +297,30 @@ class GraphEngine:
                         pass
 
                     math_val = (i / c.minor_per_major[0] - self.idx_yaxis) * c.grid_scale[0]
-                    label = self._format_number(math_val, c.tick_rounding[0])
+
+                    if not c.show_zero_label and abs(math_val) < 1e-9:
+                        continue
+
+                    if c.pi_x_axis:
+                        label = format_pi_value(math_val)
+                    else:
+                        label = self._format_number(math_val, c.tick_rounding[0])
 
                     if c.show_x_axis:
                         num_y = self.origin_y + 20
                     else:
                         num_y = y_end + 5 + c.offset_xaxis_num_y
 
-                    w, _ = self.tex_engine.measure(label, c.font_size)
+                    # Use parse_layout to get exact ascent/descent for fractions
+                    box = self.tex_engine.parse_layout(label, c.font_size)
 
-                    self.dwg.add(self.dwg.rect(insert=(px - w / 2, num_y - 11), size=(w, 12), fill='white'))
+                    # Draw rect based on actual text ascent (top) and total height
+                    self.dwg.add(self.dwg.rect(
+                        insert=(px - box.width / 2, num_y - box.ascent),
+                        size=(box.width, box.height),
+                        fill='white'
+                    ))
+
                     self.render_text_tex_lite(px, num_y, label, anchor="middle")
 
         # Y Numbers
@@ -282,9 +330,19 @@ class GraphEngine:
                 if is_major and (i != self.idx_xaxis * c.minor_per_major[1] or not c.show_x_axis):
                     py = self.margin_top + i * c.minor_spacing[1]
                     math_val = (self.idx_xaxis - i / c.minor_per_major[1]) * c.grid_scale[1]
-                    label = self._format_number(math_val, c.tick_rounding[1])
-                    w, _ = self.tex_engine.measure(label, c.font_size)
-                    self.dwg.add(self.dwg.rect(insert=(self.origin_x - 10 - w, py - 6), size=(w + 2, 12), fill='white'))
+                    if c.pi_y_axis:
+                        label = format_pi_value(math_val)
+                    else:
+                        label = self._format_number(math_val, c.tick_rounding[1])
+                    box = self.tex_engine.parse_layout(label, c.font_size)
+
+                    # Text is drawn at (py + 4), so top of rect is (py + 4) - ascent
+                    base_y = py + 4
+                    self.dwg.add(self.dwg.rect(
+                        insert=(self.origin_x - 10 - box.width, base_y - box.ascent),
+                        size=(box.width + 2, box.height),
+                        fill='white'
+                    ))
                     self.render_text_tex_lite(self.origin_x - 10, py + 4, label, anchor="end")
 
         # Labels
@@ -321,7 +379,7 @@ class GraphEngine:
             self.render_text_tex_lite(center_x, bottom_y, c.axis_labels[0], anchor="middle", italic=True)
 
     # --- RESTORED: Function Plotting ---
-    def plot_function(self, expr_str: str, domain: Tuple[float, float] = None, color="black", base_step=0.1,
+    def plot_function(self, expr_str: str, domain: Tuple[float, float] = None, color="black", base_step=0.04,
                       line_thickness=1.5, label_text=None):
         if domain is None:
             x_min = -1 * self.cfg.grid_scale[0] * self.idx_yaxis
@@ -339,10 +397,42 @@ class GraphEngine:
 
             singularities = []
             try:
-                numer, denom = expr.as_numer_denom()
-                sols = sp.solve(denom, x)
-                singularities = [float(s) for s in sols if s.is_real]
-            except Exception:
+                # 1. Force rewrite of tan/sec/csc/cot to sin/cos to expose the denominator
+                expr_rw = expr.rewrite(sp.cos)
+                numer, denom = expr_rw.as_numer_denom()
+
+                # 2. Use Numpy to scan for sign changes in denominator (foolproof detection)
+                #    If denominator is constant (e.g. 1), we skip this.
+                if denom != 1:
+                    # Create fast numpy function for denominator
+                    f_denom = sp.lambdify(x, denom, modules=['numpy', 'math'])
+
+                    # Scan 1000 points across the screen
+                    x_scan = np.linspace(domain[0], domain[1], 1001)
+                    y_scan = f_denom(x_scan)
+
+                    # Find indices where sign changes (positive <-> negative)
+                    # This indicates a zero-crossing for the denominator (an asymptote)
+                    sign_changes = np.where(np.diff(np.sign(y_scan)))[0]
+
+                    for idx in sign_changes:
+                        # Use bisection to pinpoint the asymptote location
+                        xa, xb = x_scan[idx], x_scan[idx + 1]
+
+                        # Verify it's a crossing (not just touching zero)
+                        if f_denom(xa) * f_denom(xb) <= 0:
+                            for _ in range(15):  # 15 iterations = high precision
+                                mid = (xa + xb) / 2
+                                if f_denom(mid) * f_denom(xa) > 0:
+                                    xa = mid
+                                else:
+                                    xb = mid
+                            singularities.append((xa + xb) / 2)
+
+                singularities = sorted(singularities)
+
+            except Exception as e:
+                print(f"Singularity detection error: {e}")
                 pass
 
         except Exception as e:
@@ -357,7 +447,8 @@ class GraphEngine:
 
         def safe_f(v):
             try:
-                return float(f(v))
+                val = float(f(v))
+                return val if abs(val) < 1e9 else None  # Filter massive infinities
             except:
                 return None
 
@@ -378,13 +469,12 @@ class GraphEngine:
             next_start = b
             segment_break = False
 
+            # Check if we are crossing a known singularity
             for sing in singularities:
                 if a <= sing <= b:
+                    # Stop just before the asymptote
                     b_stop = sing - epsilon
-                    if a >= b_stop:
-                        b = b_stop
-                    else:
-                        b = b_stop
+                    b = max(a, b_stop)  # Ensure we don't go backwards
                     next_start = sing + epsilon
                     segment_break = True
                     break
@@ -400,33 +490,50 @@ class GraphEngine:
                     if 0 <= bx_px <= self.width_pixels and 0 <= by_px <= self.height_pixels:
                         last_valid_point = (bx_px, by_px)
 
-                    if abs(ay_px - by_px) < self.height_pixels * 100:
+                    # --- SAFETY CHECK ---
+                    # If the line jumps more than 90% of the screen height, BREAK IT.
+                    # This hides vertical asymptote lines even if the math detector failed.
+                    if abs(ay_px - by_px) < self.height_pixels * 0.9:
                         if not current_seg_started:
                             path_data.append(f"M {ax_px:.2f},{ay_px:.2f}")
                             current_seg_started = True
 
+                        # Bezier smoothing
                         scale_factor = (bx_px - ax_px) / 3.0
                         c1x = ax_px + scale_factor
                         c1y = ay_px - (ma * scale_factor * (self.cfg.pixels_per_unit_y / self.cfg.pixels_per_unit_x))
                         c2x = bx_px - scale_factor
                         c2y = by_px + (mb * scale_factor * (self.cfg.pixels_per_unit_y / self.cfg.pixels_per_unit_x))
+
+                        # Clamp controls to prevent wild loops
                         c1y = clamp(c1y)
                         c2y = clamp(c2y)
+
                         path_data.append(f"C {c1x:.2f},{c1y:.2f} {c2x:.2f},{c2y:.2f} {bx_px:.2f},{by_px:.2f}")
+                    else:
+                        current_seg_started = False
 
             a = next_start
             if segment_break:
                 current_seg_started = False
 
         if path_data:
-            path = self.dwg.path(d=" ".join(path_data), stroke=color, fill="none", stroke_width=line_thickness)
+            # class_="function-layer" allows the auto-cropper to ignore infinity lines
+            path = self.dwg.path(d=" ".join(path_data), stroke=color, fill="none", stroke_width=line_thickness,
+                                 class_="function-layer")
             path['clip-path'] = f"url(#{self.clip_id})"
             self.dwg.add(path)
 
             if label_text and last_valid_point:
                 lx, ly = last_valid_point
+                safe_lbl = re.sub(r'[^a-zA-Z0-9]', '', label_text)
+                unique_id = f"lbl_func_{safe_lbl}_{int(lx)}"
+
+                label_group = self.dwg.g(class_="draggable-label", id_=unique_id)
+                self.dwg.add(label_group)
                 self.render_text_tex_lite(lx + 5, ly, label_text, color=color, anchor="start",
-                                          alignment_baseline="middle")
+                                          alignment_baseline="middle", container=label_group)
+
 
     def draw_box_plots(self, box_stats_list: List[Any], offsets: List[float]):
         start_y = self.margin_top
