@@ -29,13 +29,14 @@ This tool is designed to create **high-quality, publication-ready mathematical g
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Functions & Algebra")
-    st.info("Plot functions and number lines.")
+    st.subheader("Functions & Geometry")
+    st.info("Plot functions, shapes, and number lines.")
 
     st.page_link("pages/1_Function_Grapher.py", label="Function Grapher", icon="📈", use_container_width=True)
     st.page_link("pages/5_Number_Line.py", label="Number Line Plotter", icon="➖", use_container_width=True)
+    # --- NEW LINK ADDED HERE ---
 
-    st.markdown("* $y = f(x)$ plots\n* Inequalities & Intervals\n* Exact Surds & $\\pi$")
+    st.markdown("* $y = f(x)$ plots\n* Inequalities & Intervals\n* Geometry & Composites\n* Visual Domains")
 
 with col2:
     st.subheader("Statistics")
@@ -45,8 +46,7 @@ with col2:
     st.page_link("pages/3_Histograms.py", label="Histograms", icon="📊", use_container_width=True)
     st.page_link("pages/4_Scatter_Plots.py", label="Scatter Plots", icon="📉", use_container_width=True)
     st.page_link("pages/6_Visual_Quartiles.py", label="Visual Quartiles", icon="🔴", use_container_width=True)
-    # --- NEW LINK ADDED HERE ---
     st.page_link("pages/7_Stem_and_Leaf.py", label="Stem & Leaf Plots", icon="🌿", use_container_width=True)
 
 st.markdown("---")
-st.caption("GraphMaker v2.4")
+st.caption("GraphMaker v2.6")
