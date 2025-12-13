@@ -2,6 +2,7 @@ import streamlit as st
 import math
 import sys
 import os
+import sympy as sp
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -47,6 +48,10 @@ if mode == "Min/Max Window":
     link_xy = st.sidebar.checkbox("Link X/Y Scale", value=False)
     auto_scale = st.sidebar.checkbox("Auto-pick Grid Scale", value=True)
 
+    c_trig1, c_trig2 = st.sidebar.columns(2)
+    trig_x = c_trig1.checkbox("Trig X-Axis (π)", value=False)
+    trig_y = c_trig2.checkbox("Trig Y-Axis (π)", value=False)
+
     st.sidebar.markdown("### Target Print Size")
     c_dim1, c_dim2 = st.sidebar.columns(2)
     target_width_cm = c_dim1.number_input("Width (cm)", 5.0, 50.0, 12.0, step=0.5)
@@ -88,19 +93,41 @@ if mode == "Min/Max Window":
 
 
     if auto_scale:
-        scale_x = calculate_auto_scale_physical(global_xmin, global_xmax, target_width_cm)
+        # 1. Calculate X Scale
+        if trig_x:
+            scale_x = math.pi / 2  # Auto-sets to pi/2
+        else:
+            scale_x = calculate_auto_scale_physical(global_xmin, global_xmax, target_width_cm)
+
+        # 2. Calculate Y Scale
         if link_xy:
             scale_y = scale_x
         else:
-            scale_y = calculate_auto_scale_physical(ymin, ymax, target_height_cm)
+            if trig_y:
+                scale_y = math.pi / 2
+            else:
+                scale_y = calculate_auto_scale_physical(ymin, ymax, target_height_cm)
     else:
+        def parse_scale(val_str):
+            try:
+                # Use sympy to evaluate "pi/4", "2pi", etc.
+                expr = sp.sympify(str(val_str).replace('pi', 'pi'))
+                return float(expr.evalf())
+            except:
+                return 1.0
+
+
         if link_xy:
-            scale_x = st.sidebar.number_input("Grid Scale", 0.1, 100.0, 1.0)
+            sc_input = st.sidebar.text_input("Grid Scale", "1.0")
+            scale_x = parse_scale(sc_input)
             scale_y = scale_x
         else:
             c_s1, c_s2 = st.sidebar.columns(2)
-            scale_x = c_s1.number_input("X Scale", 0.1, 100.0, 1.0)
-            scale_y = c_s2.number_input("Y Scale", 0.1, 100.0, 1.0)
+            sx_input = c_s1.text_input("X Scale", "1.0")
+            sy_input = c_s2.text_input("Y Scale", "1.0")
+            scale_x = parse_scale(sx_input)
+            scale_y = parse_scale(sy_input)
+
 
     x_cols = max(1, math.ceil(width_units / scale_x))
     y_cols = max(1, math.ceil(height_units / scale_y))
@@ -138,6 +165,7 @@ show_y_ticks = c_tick2.checkbox("Y Axis Ticks", value=True)
 c_num1, c_num2 = st.sidebar.columns(2)
 show_x_nums = c_num1.checkbox("X Scale", value=True)
 show_y_nums = c_num2.checkbox("Y Scale", value=True)
+show_zero = st.sidebar.checkbox("Show Origin (0)", value=False)
 c5, c6 = st.sidebar.columns(2)
 label_x = c5.text_input("X Label", "x")
 label_y = c6.text_input("Y Label", "y")
@@ -180,10 +208,17 @@ with col_funcs:
                 remove_func(i)
                 st.rerun()
 
-            c_col, c_thk, c_lbl = st.columns([1, 2, 2])
-            func_obj['color'] = c_col.color_picker("C", func_obj['color'], key=f"col_{i}", label_visibility="collapsed")
+            # Updated columns to fit the new "Show" checkbox
+            c_col, c_thk, c_vis, c_lbl = st.columns([1, 2, 1.5, 1.5])
+
+            func_obj['color'] = c_col.color_picker("C", func_obj['color'], key=f"col_{i}",
+                                                       label_visibility="collapsed")
             func_obj['thick'] = c_thk.number_input("Thick", 0.5, 10.0, func_obj['thick'], step=0.5, key=f"thk_{i}",
-                                                   label_visibility="collapsed")
+                                                       label_visibility="collapsed")
+
+            # New "Show" checkbox (defaults to True)
+            func_obj['visible'] = c_vis.checkbox("Show", func_obj.get('visible', True), key=f"vis_{i}")
+
             func_obj['label'] = c_lbl.checkbox("Label", func_obj['label'], key=f"lbl_{i}")
 
             func_obj['use_custom_domain'] = st.checkbox("Restrict Domain", func_obj['use_custom_domain'],
@@ -228,7 +263,10 @@ with col_preview:
         show_x_numbers=show_x_nums,
         show_y_numbers=show_y_nums,
         show_x_ticks=show_x_ticks,
-        show_y_ticks=show_y_ticks
+        show_y_ticks=show_y_ticks,
+        pi_x_axis=trig_x,
+        pi_y_axis=trig_y,
+        show_zero_label=show_zero
     )
 
     engine = GraphEngine(config)
@@ -236,7 +274,7 @@ with col_preview:
     engine.draw_axis_labels()
 
     for func_obj in st.session_state.funcs_data:
-        if func_obj['expr'].strip():
+        if func_obj['expr'].strip() and func_obj.get('visible', True):
             if func_obj['use_custom_domain']:
                 domain = (func_obj['dom_min'], func_obj['dom_max'])
             else:
