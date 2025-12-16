@@ -33,6 +33,7 @@ with col1:
     st.info("Plot functions, shapes, and number lines.")
 
     st.page_link("pages/1_Function_Grapher.py", label="Function Grapher", icon="📈", use_container_width=True)
+    st.page_link("pages/10_Inequality_Grapher.py", label="Inequality Grapher", icon="🖍️", use_container_width=True)
     st.page_link("pages/5_Number_Line.py", label="Number Line Plotter", icon="➖", use_container_width=True)
     # --- NEW LINK ADDED HERE ---
 
